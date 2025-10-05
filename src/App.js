@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { CssBaseline, Container, Grid, Paper, Typography, TextField, Button, Stack, Divider, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Box } from '@mui/material';
+import { CssBaseline, Container, Grid, Paper, Typography, TextField, Button, Stack, Divider, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Box, Slider } from '@mui/material';
 import * as XLSX from 'xlsx';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080/api/festivi/assegna';
@@ -22,6 +22,7 @@ function App() {
   const [assignedBlob, setAssignedBlob] = useState(null);
   const [inputFileName, setInputFileName] = useState('output');
   const [sortConfig, setSortConfig] = useState({ key: 'data', direction: 'asc' });
+  const [alpha, setAlpha] = useState(1.0);
   const [weightsRows, setWeightsRows] = useState([]);
   const [weightsCols, setWeightsCols] = useState([]);
   const [eventsRows, setEventsRows] = useState([]);
@@ -81,6 +82,7 @@ function App() {
       formData.append('startDate', startDate);
       formData.append('endDate', endDate);
       formData.append('minProximityDays', String(minProximityDays));
+      formData.append('alpha', String(alpha));
 
       const url = `${API_BASE_URL}/${mode}`;
       const resp = await fetch(url, { method: 'POST', body: formData });
@@ -229,6 +231,11 @@ function App() {
                 <TextField label="Data inizio (YYYY-MM-DD)" value={startDate} onChange={(e)=>setStartDate(e.target.value)} size="small" />
                 <TextField label="Data fine (YYYY-MM-DD)" value={endDate} onChange={(e)=>setEndDate(e.target.value)} size="small" />
                 <TextField label="Distanza minima (giorni)" type="number" value={minProximityDays} onChange={(e)=>setMinProximityDays(e.target.value)} size="small" />
+              <Box>
+                <Typography variant="caption">Bilanciamento (alpha)</Typography>
+                <Slider size="small" value={alpha} min={0} max={1} step={0.05} onChange={(_,v)=>setAlpha(v)} valueLabelDisplay="auto" />
+                <Typography variant="caption">0 = Eventi | 1 = Pesi (default)</Typography>
+              </Box>
                 {error && <Alert severity="error">{error}</Alert>}
                 <Stack direction="row" spacing={2} justifyContent="space-between">
                   <Button sx={{ flex:1 }} variant="contained" color="primary" disabled={loading} onClick={()=>onCalc('greedy')}>{loading ? '...' : 'Calcolo Greedy'}</Button>
