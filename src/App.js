@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { CssBaseline, Container, Grid, Paper, Typography, TextField, Button, Stack, Divider, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Box, Slider } from '@mui/material';
+import { CssBaseline, Container, Grid, Paper, Typography, TextField, Button, Stack, Divider, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, Box, Slider, CircularProgress } from '@mui/material';
 import * as XLSX from 'xlsx';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080/api/festivi/assegna';
@@ -14,7 +14,8 @@ function App() {
   const [file, setFile] = useState(null);
   const [startDate, setStartDate] = useState('2025-01-01');
   const [endDate, setEndDate] = useState('2025-12-31');
-  const [minProximityDays, setMinProximityDays] = useState(2);
+  const [minProximityDays, setMinProximityDays] = useState(3);
+  const [milpTimeoutSeconds, setMilpTimeoutSeconds] = useState(120);
   const [iframeSrc, setIframeSrc] = useState('about:blank');
   const [loading, setLoading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState('');
@@ -30,6 +31,8 @@ function App() {
   const [heavyKeys, setHeavyKeys] = useState(new Set());
   const [heavyTeamMonths, setHeavyTeamMonths] = useState(new Set());
   const [error, setError] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [abortController, setAbortController] = useState(null);
 
   const onFileChange = async (e) => {
     const f = e.target.files && e.target.files[0];
@@ -70,12 +73,23 @@ function App() {
     if (!Number.isInteger(Number(minProximityDays)) || Number(minProximityDays) < 0) { setError('minProximityDays deve essere intero >= 0'); return; }
 
     setLoading(true);
+    setElapsedSeconds(0);
     // Pulisci le 3 tabelle immediatamente
     setAssignedRows([]);
     setWeightsRows([]); setWeightsCols([]);
     setEventsRows([]); setEventsCols([]);
     setAssignedBlob(null);
     setDownloadUrl('');
+    
+    // Timer per elapsed seconds
+    const timerInterval = setInterval(() => {
+      setElapsedSeconds(prev => prev + 1);
+    }, 1000);
+    
+    // AbortController per cancellare la richiesta
+    const controller = new AbortController();
+    setAbortController(controller);
+    
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -83,9 +97,12 @@ function App() {
       formData.append('endDate', endDate);
       formData.append('minProximityDays', String(minProximityDays));
       formData.append('alpha', String(alpha));
+      if (mode === 'milp') {
+        formData.append('timeoutSeconds', String(milpTimeoutSeconds));
+      }
 
       const url = `${API_BASE_URL}/${mode}`;
-      const resp = await fetch(url, { method: 'POST', body: formData });
+      const resp = await fetch(url, { method: 'POST', body: formData, signal: controller.signal });
       if (!resp.ok) {
         const txt = await resp.text();
         setError(`Errore ${resp.status}: ${txt}`);
@@ -159,9 +176,21 @@ function App() {
         setEventsRows([]); setEventsCols([]);
       }
     } catch (e) {
-      setError(e.message);
+      if (e.name === 'AbortError') {
+        setError('Calcolo annullato dall\'utente');
+      } else {
+        setError(e.message);
+      }
     } finally {
+      clearInterval(timerInterval);
       setLoading(false);
+      setAbortController(null);
+    }
+  };
+  
+  const onAbort = () => {
+    if (abortController) {
+      abortController.abort();
     }
   };
   const handleDownload = () => {
@@ -205,10 +234,10 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="xl" sx={{ py: 2, height: '100vh', overflow: 'hidden' }}>
-        <Grid container spacing={2} sx={{ height: '100%' }}>
+      <Container maxWidth="xl" sx={{ py: 2 }}>
+        <Grid container spacing={2}>
           <Grid item xs={12} md={5}>
-            <Paper elevation={3} sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column', gap: 2, overflow: 'hidden' }}>
+            <Paper elevation={3} sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Typography variant="h5" fontWeight={700}>Calcolo Turni Festivi</Typography>
               <Divider />
               <Stack spacing={2}>
@@ -231,24 +260,47 @@ function App() {
                 <TextField label="Data inizio (YYYY-MM-DD)" value={startDate} onChange={(e)=>setStartDate(e.target.value)} size="small" />
                 <TextField label="Data fine (YYYY-MM-DD)" value={endDate} onChange={(e)=>setEndDate(e.target.value)} size="small" />
                 <TextField label="Distanza minima (giorni)" type="number" value={minProximityDays} onChange={(e)=>setMinProximityDays(e.target.value)} size="small" />
+                <TextField label="Timeout MILP (secondi)" type="number" value={milpTimeoutSeconds} onChange={(e)=>setMilpTimeoutSeconds(e.target.value)} size="small" helperText="Tempo massimo per il calcolo MILP (default: 120s)" />
               <Box>
                 <Typography variant="caption">Bilanciamento (alpha)</Typography>
                 <Slider size="small" value={alpha} min={0} max={1} step={0.05} onChange={(_,v)=>setAlpha(v)} valueLabelDisplay="auto" />
                 <Typography variant="caption">0 = Eventi | 1 = Pesi (default)</Typography>
               </Box>
                 {error && <Alert severity="error">{error}</Alert>}
+                {loading && (
+                  <Box sx={{ textAlign: 'center', py: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Tempo trascorso: {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+                    </Typography>
+                  </Box>
+                )}
                 <Stack direction="row" spacing={2} justifyContent="space-between">
-                  <Button sx={{ flex:1 }} variant="contained" color="primary" disabled={loading} onClick={()=>onCalc('greedy')}>{loading ? '...' : 'Calcolo Greedy'}</Button>
-                  <Button sx={{ flex:1 }} variant="contained" color="secondary" disabled={loading} onClick={()=>onCalc('milp')}>{loading ? '...' : 'Calcolo MILP'}</Button>
+                  <Button sx={{ flex:1 }} variant="contained" color="primary" disabled={loading} onClick={()=>onCalc('greedy')}>
+                    {loading ? '...' : 'Calcolo Greedy'}
+                  </Button>
+                  <Button sx={{ flex:1 }} variant="contained" color="secondary" disabled={loading} onClick={()=>onCalc('milp')}>
+                    {loading ? '...' : 'Calcolo MILP'}
+                  </Button>
                 </Stack>
+                {loading && (
+                  <Button variant="outlined" size="small" color="error" onClick={onAbort} fullWidth>
+                    Annulla calcolo
+                  </Button>
+                )}
                 <Button variant="outlined" size="small" onClick={handleDownload} disabled={!assignedBlob}>Scarica Excel di output</Button>
               </Stack>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={7} sx={{ height: '100%' }}>
-            <Paper elevation={3} sx={{ p: 1, height: '100%', display:'flex', flexDirection:'column', overflowY:'auto' }}>
-              <Box sx={{ minHeight:0, flex:1, display:'flex', flexDirection:'column', gap:2 }}>
-                {weightsRows.length > 0 && (
+          <Grid item xs={12} md={7}>
+            <Paper elevation={3} sx={{ p: 1, display:'flex', flexDirection:'column', height:{ xs: 'auto', md: '100%' }, overflowY:{ xs: 'visible', md: 'auto' } }}>
+              <Box sx={{ minHeight:{ md:0 }, flex:{ md:1 }, display:'flex', flexDirection:'column', gap:2 }}>
+                {loading && (
+                  <Box sx={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, py:8 }}>
+                    <CircularProgress size={60} />
+                    <Typography variant="body1" color="text.secondary">Calcolo in corso...</Typography>
+                  </Box>
+                )}
+                {!loading && weightsRows.length > 0 && (
                   <Box>
                     <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>Riepilogo Pesi</Typography>
                     <TableContainer>
@@ -269,7 +321,7 @@ function App() {
                     </TableContainer>
                   </Box>
                 )}
-                {eventsRows.length > 0 && (
+                {!loading && eventsRows.length > 0 && (
                   <Box>
                     <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>Riepilogo Eventi</Typography>
                     <TableContainer>
@@ -300,8 +352,8 @@ function App() {
                     </TableContainer>
                   </Box>
                 )}
-                <Typography variant="subtitle1" fontWeight={600} sx={{ px:1 }}>Risultati calcolo</Typography>
-                {sortedRows.length > 0 && (
+                {!loading && <Typography variant="subtitle1" fontWeight={600} sx={{ px:1 }}>Risultati calcolo</Typography>}
+                {!loading && sortedRows.length > 0 && (
                   <TableContainer>
                     <Table size="small" stickyHeader>
                       <TableHead>

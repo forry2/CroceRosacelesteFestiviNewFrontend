@@ -2,6 +2,7 @@
   "name": "crocerosacelestefestivi-new-frontend",
   "version": "0.1.0",
   "private": true,
+  "homepage": "/festivi",
   "dependencies": {
     "react": "18.2.0",
     "react-dom": "18.2.0",
